@@ -49,12 +49,30 @@ impl WorldTokenizer {
                 let mut string: String = captures[3].to_string();
                 string = string[1..string.len() - 1].parse().unwrap();
                 let sbytes: Vec<u8> = if is_byte.len() == 0 {
-                    string = unescape(string.as_str()).unwrap();
+                    string = unescape(string.as_str()).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to parse string token escape: {line:?}"),
+                        )
+                    })?;
                     Vec::from(string.as_bytes())
                 } else {
-                    WorldTokenizer::hex_to_bytes(string.as_str()).unwrap()
+                    WorldTokenizer::parse_byte_token(string.as_str()).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unable to parse byte token escape: {line:?}"),
+                        )
+                    })?
                 };
-                assert_eq!(sbytes.len(), length);
+                if sbytes.len() != length {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "Token byte length mismatch: expected {length}, got {} in {line:?}",
+                            sbytes.len()
+                        ),
+                    ));
+                }
                 tokenizer.add_token(id, sbytes);
             } else {
                 println!("Line with issue: {:?}", line)
@@ -113,19 +131,67 @@ impl WorldTokenizer {
         vocabularies
     }
 
-    fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
-        let hex = hex.replace("\\x", "");
-        if hex.len() % 2 == 0 {
-            (0..hex.len())
-                .step_by(2)
-                .map(|i| {
-                    hex.get(i..i + 2)
-                        .and_then(|sub| u8::from_str_radix(sub, 16).ok())
-                })
-                .collect()
-        } else {
-            None
+    fn parse_byte_token(token: &str) -> Option<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(token.len());
+        let chars: Vec<char> = token.chars().collect();
+        let mut index = 0;
+        while index < chars.len() {
+            let ch = chars[index];
+            if ch != '\\' {
+                if u32::from(ch) > 0x7f {
+                    return None;
+                }
+                bytes.push(ch as u8);
+                index += 1;
+                continue;
+            }
+
+            index += 1;
+            if index >= chars.len() {
+                return None;
+            }
+            let escaped = chars[index];
+            match escaped {
+                '\\' => bytes.push(b'\\'),
+                '\'' => bytes.push(b'\''),
+                '"' => bytes.push(b'"'),
+                'n' => bytes.push(b'\n'),
+                'r' => bytes.push(b'\r'),
+                't' => bytes.push(b'\t'),
+                'a' => bytes.push(0x07),
+                'b' => bytes.push(0x08),
+                'f' => bytes.push(0x0c),
+                'v' => bytes.push(0x0b),
+                'x' => {
+                    if index + 2 >= chars.len() {
+                        return None;
+                    }
+                    let hex = format!("{}{}", chars[index + 1], chars[index + 2]);
+                    bytes.push(u8::from_str_radix(&hex, 16).ok()?);
+                    index += 2;
+                }
+                '0'..='7' => {
+                    let mut octal = String::from(escaped);
+                    while octal.len() < 3
+                        && index + 1 < chars.len()
+                        && matches!(chars[index + 1], '0'..='7')
+                    {
+                        index += 1;
+                        octal.push(chars[index]);
+                    }
+                    bytes.push(u8::from_str_radix(&octal, 8).ok()?);
+                }
+                '\n' => {}
+                _ => {
+                    if u32::from(escaped) > 0x7f {
+                        return None;
+                    }
+                    bytes.push(escaped as u8);
+                }
+            }
+            index += 1;
         }
+        Some(bytes)
     }
 }
 
@@ -904,5 +970,21 @@ Nórdicg: Ljœr ye caudran créneþ ý jor cẃran."#;
             "<|rwkv_tokenizer_end_of_text|>a\n\nb"
         );
         assert_eq!(tokenizer.decode(vec![2, 4]).unwrap(), "\n\n\n\n");
+    }
+
+    #[test]
+    fn test_python_bytes_literal_tokens() {
+        let vocab = br#"0 b'\n' 1
+1 b'abc' 3
+2 b'\x00\xff' 2
+3 b'\\' 1
+4 b'\'' 1
+5 b'\101' 1
+"#;
+        let tokenizer = WorldTokenizer::from_buffer(vocab).unwrap();
+
+        assert_eq!(tokenizer.encode("\nabc\\'A"), [0, 1, 3, 4, 5]);
+        assert_eq!(tokenizer.decode(vec![0, 1, 3, 4, 5]).unwrap(), "\nabc\\'A");
+        assert!(tokenizer.decode(vec![2]).is_err());
     }
 }
