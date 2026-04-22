@@ -1,15 +1,14 @@
 #[derive(Default, Debug)]
 struct TrieNode {
     children: [[Option<Box<TrieNode>>; 16]; 16],
-    id: u16
+    id: Option<u16>,
 }
-
 
 impl TrieNode {
     fn new() -> Self {
         let mut trinode = TrieNode {
             children: Default::default(),
-            id: 0
+            id: None,
         };
         for index in 0..256 {
             trinode.children[index >> 4][index & 15] = None;
@@ -22,7 +21,6 @@ impl TrieNode {
 pub struct Trie {
     root: TrieNode,
 }
-
 
 impl Trie {
     pub(crate) fn new() -> Self {
@@ -42,60 +40,44 @@ impl Trie {
             }
             match &mut node.children[index_a][index_b] {
                 Some(next_node) => node = next_node,
-                None => unreachable!(),  // We've just checked that it's not None
+                None => unreachable!(), // We've just checked that it's not None
             }
         }
-        node.id = id
+        node.id = Some(id)
     }
 
-    fn search_the_longest(&self, word: &[u8]) -> (u16, u16) {
+    fn search_the_longest(&self, word: &[u8]) -> Option<(usize, u16)> {
         let mut node = &self.root;
-        let mut old_node: &TrieNode = &self.root;
-        let mut index = 0;
-        let mut old_index = 0;
-        for ch in word {
+        let mut best: Option<(usize, u16)> = None;
+        for (index, ch) in word.iter().enumerate() {
             let ch = u8::from_be(*ch) as usize;
             let index_a = ch >> 4;
             let index_b = ch & 15;
-            if let Some(next_node) = &node.children[index_a][index_b]{
-                if node.id != 0 {
-                    old_node = node;
-                    old_index = index;
-                }
+            if let Some(next_node) = &node.children[index_a][index_b] {
                 node = &next_node;
-                index += 1;
+                if let Some(id) = node.id {
+                    best = Some((index + 1, id));
+                }
             } else {
-                if node.id == 0 {
-                    return (old_index, old_node.id);
-                }
-                else {
-                    return (index, node.id);
-                }
+                return best;
             }
         }
-        if node.id == 0 {
-            return (old_index, old_node.id);
-        }
-        else {
-            return (index, node.id);
-        }
+        best
     }
 
     pub(crate) fn tokenize(&self, text: &str) -> Vec<u16> {
         let mut vec: Vec<u16> = Vec::new();
         let text_length = text.len();
         let mut index: usize = 0;
-        loop {
-            let result = self.search_the_longest(&text.as_bytes()[index..]);
-            if result.0 != 0 {
-                vec.push(result.1.into());
-                index += <u16 as Into<usize>>::into(result.0);
-            } else {
-                return vec;
-            }
-            if index >= text_length {
-                return vec;
+        while index < text_length {
+            match self.search_the_longest(&text.as_bytes()[index..]) {
+                Some((token_len, id)) => {
+                    vec.push(id.into());
+                    index += token_len;
+                }
+                None => return vec,
             }
         }
+        vec
     }
 }

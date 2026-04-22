@@ -1,96 +1,76 @@
 mod trie;
-use std::{str, env};
+use rayon::prelude::*;
+use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::{Path};
+use std::path::Path;
 use std::str::Utf8Error;
-use regex::Regex;
+use std::{env, str};
 use trie::Trie;
 use unescape::unescape;
-use rayon::prelude::*;
-
 
 #[derive(Debug)]
 pub struct WorldTokenizer {
     tokens: Vec<Vec<u8>>,
-    trie: Trie
+    assigned_ids: Vec<bool>,
+    trie: Trie,
 }
 
 impl WorldTokenizer {
     pub fn new(vocab_filepath: Option<&str>) -> io::Result<Self> {
-        let mut tokenizer = WorldTokenizer {
-            tokens: Vec::new(),
-            trie: Trie::new()
-        };
-        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets").join("rwkv_vocab_v20230424.txt");
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join("rwkv_vocab_v20230424.txt");
         let vocab_filepath = vocab_filepath.unwrap_or(manifest_path.to_str().unwrap());
         let file = File::open(vocab_filepath)?;
         let reader = io::BufReader::new(file);
+        WorldTokenizer::from_reader(reader)
+    }
 
+    pub fn from_buffer(buffer: &[u8]) -> io::Result<Self> {
+        let reader = io::BufReader::new(buffer);
+        WorldTokenizer::from_reader(reader)
+    }
+
+    fn from_reader<R: BufRead>(reader: R) -> io::Result<Self> {
+        let mut tokenizer = WorldTokenizer {
+            tokens: Vec::new(),
+            assigned_ids: Vec::new(),
+            trie: Trie::new(),
+        };
         let re = Regex::new(r"(\d+)\s+(b?)(.+)\s+(\d+)").unwrap();
-        tokenizer.tokens.push(vec![0]);
         for line in reader.lines() {
             let line = line?;
             if let Some(captures) = re.captures(&line) {
-                let id = captures[1].parse::<u16>().unwrap();
+                let id = usize::from(captures[1].parse::<u16>().unwrap());
                 let is_byte = captures[2].to_string();
                 let length = captures[4].parse::<usize>().unwrap();
                 let mut string: String = captures[3].to_string();
-                string = string[1..string.len()-1].parse().unwrap();
-                let sbytes: Vec<u8>;
-                if is_byte.len() == 0 {
+                string = string[1..string.len() - 1].parse().unwrap();
+                let sbytes: Vec<u8> = if is_byte.len() == 0 {
                     string = unescape(string.as_str()).unwrap();
-                    sbytes = string.clone().into_bytes();
-                    tokenizer.tokens.push(Vec::from(string.as_bytes()));
+                    Vec::from(string.as_bytes())
                 } else {
-                    sbytes = WorldTokenizer::hex_to_bytes(string.as_str()).unwrap();
-                    tokenizer.tokens.push(sbytes.clone());
-                }
+                    WorldTokenizer::hex_to_bytes(string.as_str()).unwrap()
+                };
                 assert_eq!(sbytes.len(), length);
-                tokenizer.trie.insert(&sbytes, id);
-            }
-            else {
+                tokenizer.add_token(id, sbytes);
+            } else {
                 println!("Line with issue: {:?}", line)
             }
         }
         Ok(tokenizer)
     }
 
-    pub fn from_buffer(buffer: &[u8]) -> io::Result<Self> {
-        let mut tokenizer = WorldTokenizer {
-            tokens: Vec::new(),
-            trie: Trie::new()
-        };
-        let reader = io::BufReader::new(buffer);
-
-        let re = Regex::new(r"(\d+)\s+(b?)(.+)\s+(\d+)").unwrap();
-        tokenizer.tokens.push(vec![0]);
-        for line in reader.lines() {
-            let line = line?;
-            if let Some(captures) = re.captures(&line) {
-                let id = captures[1].parse::<u16>().unwrap();
-                let is_byte = captures[2].to_string();
-                let length = captures[4].parse::<usize>().unwrap();
-                let mut string: String = captures[3].to_string();
-                string = string[1..string.len()-1].parse().unwrap();
-                let sbytes: Vec<u8>;
-                if is_byte.len() == 0 {
-                    string = unescape(string.as_str()).unwrap();
-                    sbytes = string.clone().into_bytes();
-                    tokenizer.tokens.push(Vec::from(string.as_bytes()));
-                } else {
-                    sbytes = WorldTokenizer::hex_to_bytes(string.as_str()).unwrap();
-                    tokenizer.tokens.push(sbytes.clone());
-                }
-                assert_eq!(sbytes.len(), length);
-                tokenizer.trie.insert(&sbytes, id);
-            }
-            else {
-                println!("Line with issue: {:?}", line)
-            }
+    fn add_token(&mut self, id: usize, token: Vec<u8>) {
+        if self.tokens.len() <= id {
+            self.tokens.resize(id + 1, Vec::new());
+            self.assigned_ids.resize(id + 1, false);
         }
-        Ok(tokenizer)
+        self.tokens[id] = token.clone();
+        self.assigned_ids[id] = true;
+        self.trie.insert(&token, id as u16);
     }
 
     pub fn encode(&self, word: &str) -> Vec<u16> {
@@ -98,14 +78,20 @@ impl WorldTokenizer {
     }
 
     pub fn encode_batch(&self, word_list: Vec<String>) -> Vec<Vec<u16>> {
-        word_list.par_iter().map(|word| self.trie.tokenize(word)).collect()
+        word_list
+            .par_iter()
+            .map(|word| self.trie.tokenize(word))
+            .collect()
     }
 
     pub fn decode(&self, vec: Vec<u16>) -> Result<String, Utf8Error> {
         let mut result: Vec<u8> = Vec::new();
         for index in vec.iter() {
-            let mut current_tokens = self.tokens[*index as usize].clone();
-            result.append(&mut current_tokens);
+            let index = *index as usize;
+            if self.assigned_ids.get(index).copied().unwrap_or(false) {
+                let mut current_tokens = self.tokens[index].clone();
+                result.append(&mut current_tokens);
+            }
         }
         Ok(str::from_utf8(&*result)?.to_string())
     }
@@ -117,7 +103,11 @@ impl WorldTokenizer {
     pub fn get_vocab(&self) -> HashMap<String, usize> {
         let mut vocabularies: HashMap<String, usize> = HashMap::new();
         for (index, value) in self.tokens.iter().enumerate() {
-            let text: String = String::from_utf8((*value).to_owned()).unwrap_or_else(|_e| "Binary string (TODO)".to_string());
+            if !self.assigned_ids[index] {
+                continue;
+            }
+            let text: String = String::from_utf8((*value).to_owned())
+                .unwrap_or_else(|_e| "Binary string (TODO)".to_string());
             vocabularies.insert(text, index);
         }
         vocabularies
@@ -128,8 +118,10 @@ impl WorldTokenizer {
         if hex.len() % 2 == 0 {
             (0..hex.len())
                 .step_by(2)
-                .map(|i| hex.get(i..i + 2)
-                    .and_then(|sub| u8::from_str_radix(sub, 16).ok()))
+                .map(|i| {
+                    hex.get(i..i + 2)
+                        .and_then(|sub| u8::from_str_radix(sub, 16).ok())
+                })
                 .collect()
         } else {
             None
@@ -856,7 +848,13 @@ Nórdicg: Ljœr ye caudran créneþ ý jor cẃran."#;
     fn test_encoding_beautiful_day() {
         let tokenizer = WorldTokenizer::new(None).unwrap();
         let token_ids = tokenizer.encode(BEAUTIFUL_DAY);
-        assert_eq!(token_ids, [33520, 4600, 332, 59219, 21509, 47, 33, 10381, 11639, 13091, 15597, 11685, 14734, 10250, 11639, 10080]);
+        assert_eq!(
+            token_ids,
+            [
+                33520, 4600, 332, 59219, 21509, 47, 33, 10381, 11639, 13091, 15597, 11685, 14734,
+                10250, 11639, 10080
+            ]
+        );
     }
 
     #[test]
@@ -890,5 +888,21 @@ Nórdicg: Ljœr ye caudran créneþ ý jor cẃran."#;
         // The vocab size should be 65529, but currently, the binary keys/strings are not included,
         // therefore it is only 65044. It will be added later.
         assert_eq!(vocab.len(), 65044);
+    }
+
+    #[test]
+    fn test_explicit_zero_and_added_token_ids() {
+        let vocab = b"0 '<|rwkv_tokenizer_end_of_text|>' 30\n1 'a' 1\n2 '\\n\\n' 2\n3 'b' 1\n4 '\\n\\n' 2\n";
+        let tokenizer = WorldTokenizer::from_buffer(vocab).unwrap();
+
+        assert_eq!(
+            tokenizer.encode("<|rwkv_tokenizer_end_of_text|>a\n\nb"),
+            [0, 1, 4, 3]
+        );
+        assert_eq!(
+            tokenizer.decode(vec![0, 1, 4, 3]).unwrap(),
+            "<|rwkv_tokenizer_end_of_text|>a\n\nb"
+        );
+        assert_eq!(tokenizer.decode(vec![2, 4]).unwrap(), "\n\n\n\n");
     }
 }
