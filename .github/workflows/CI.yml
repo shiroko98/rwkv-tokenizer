@@ -22,37 +22,36 @@ jobs:
         run: cargo test --release --manifest-path rwkv-tokenizer/Cargo.toml
 
   linux-wheels:
-    name: Linux ${{ matrix.target }} / CPython ${{ matrix.python }}
+    name: Linux ${{ matrix.target }} wheels
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         target: [x86_64, aarch64]
-        python: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Build manylinux wheel
+      - name: Build manylinux wheels for every supported CPython
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
-          args: --release --out dist --interpreter python
-          manylinux: "2_17"
+          # In a manylinux container, --find-interpreter discovers the
+          # container's CPython installations. Passing the host runner's
+          # `python` path into Docker causes the build action to fail.
+          args: --release --out dist --find-interpreter
+          manylinux: auto
           sccache: "true"
-      - name: Verify x86_64 wheel public API
+      - name: Verify the CPython 3.11 x86_64 wheel public API
         if: matrix.target == 'x86_64'
         working-directory: bindings/python
         run: |
           python -m pip install --upgrade pip pytest
-          python -m pip install --force-reinstall --no-deps dist/*.whl
+          python -m pip install --force-reinstall --no-deps dist/*-cp311-cp311-*.whl
           python -m pytest -q tests/test_package_smoke.py
-      - name: Upload wheel
+      - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-linux-${{ matrix.target }}-py${{ matrix.python }}
+          name: wheel-linux-${{ matrix.target }}
           path: bindings/python/dist/*.whl
           if-no-files-found: error
 
