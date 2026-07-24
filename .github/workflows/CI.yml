@@ -21,28 +21,22 @@ jobs:
       - name: Test tokenizer core
         run: cargo test --release --manifest-path rwkv-tokenizer/Cargo.toml
 
-  linux-wheels:
-    name: Linux ${{ matrix.target }} wheels
+  linux-x86_64-wheels:
+    name: Linux x86_64 wheels
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x86_64, aarch64]
     steps:
-      # maturin-action's manylinux Docker runners are validated against
-      # Ubuntu 22.04. Keep this pinned instead of the moving ubuntu-latest.
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Build manylinux wheels for every supported CPython
+      - name: Build manylinux wheels for CPython 3.10 to 3.12
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
-          target: ${{ matrix.target }}
-          # PyO3 0.23.5 supports CPython through 3.13. Do not use
-          # --find-interpreter: current manylinux images also contain CPython
-          # 3.14, which PyO3 rejects at build time.
+          target: x86_64
+          # PyO3 0.23.5 supports CPython through 3.13. Explicitly select the
+          # deployment ABIs so a newly added manylinux interpreter cannot
+          # silently break releases (for example CPython 3.14).
           args: >-
             --release --out dist
             --interpreter /opt/python/cp310-cp310/bin/python
@@ -50,8 +44,7 @@ jobs:
             /opt/python/cp312-cp312/bin/python
           manylinux: auto
           sccache: "true"
-      - name: Verify the CPython 3.11 x86_64 wheel public API
-        if: matrix.target == 'x86_64'
+      - name: Verify the CPython 3.11 wheel public API
         working-directory: bindings/python
         run: |
           python -m pip install --upgrade pip pytest
@@ -60,7 +53,43 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-linux-${{ matrix.target }}
+          name: wheel-linux-x86_64
+          path: bindings/python/dist/*.whl
+          if-no-files-found: error
+
+  linux-aarch64-wheels:
+    name: Linux aarch64 wheels
+    # This is a native ARM64 GitHub-hosted runner. The previous x86_64 cross
+    # container cannot execute /opt/python/cp*-cp* ARM binaries, which caused
+    # the "Exec format error" from PyO3 metadata discovery.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Build manylinux wheels for CPython 3.10 to 3.12
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: aarch64
+          args: >-
+            --release --out dist
+            --interpreter /opt/python/cp310-cp310/bin/python
+            /opt/python/cp311-cp311/bin/python
+            /opt/python/cp312-cp312/bin/python
+          manylinux: auto
+          sccache: "true"
+      - name: Verify the CPython 3.11 wheel public API
+        working-directory: bindings/python
+        run: |
+          python -m pip install --upgrade pip pytest
+          python -m pip install --force-reinstall --no-deps dist/*-cp311-cp311-*.whl
+          python -m pytest -q tests/test_package_smoke.py
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-aarch64
           path: bindings/python/dist/*.whl
           if-no-files-found: error
 
@@ -84,7 +113,7 @@ jobs:
   release:
     name: Attach wheels to GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [rust-tests, linux-wheels, sdist]
+    needs: [rust-tests, linux-x86_64-wheels, linux-aarch64-wheels, sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
