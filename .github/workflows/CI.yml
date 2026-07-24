@@ -40,10 +40,14 @@ jobs:
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
-          # In a manylinux container, --find-interpreter discovers the
-          # container's CPython installations. Passing the host runner's
-          # `python` path into Docker causes the build action to fail.
-          args: --release --out dist --find-interpreter
+          # PyO3 0.23.5 supports CPython through 3.13. Do not use
+          # --find-interpreter: current manylinux images also contain CPython
+          # 3.14, which PyO3 rejects at build time.
+          args: >-
+            --release --out dist
+            --interpreter /opt/python/cp310-cp310/bin/python
+            /opt/python/cp311-cp311/bin/python
+            /opt/python/cp312-cp312/bin/python
           manylinux: auto
           sccache: "true"
       - name: Verify the CPython 3.11 x86_64 wheel public API
