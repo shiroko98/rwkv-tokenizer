@@ -163,5 +163,8 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag
+            # This job only runs for an already-pushed v* tag. Do not pass
+            # --verify-tag: gh implements it through the local git checkout,
+            # which this artifact-only job intentionally does not need.
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes
           fi
