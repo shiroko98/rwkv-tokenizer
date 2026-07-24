@@ -1,65 +1,67 @@
-# RWKV Tokenizer
+# RWKV tokenizer for RWKV7 deployments
 
-[![GitHub Actions Status](https://github.com/cahya-wirawan/rwkv-tokenizer/actions/workflows/CI.yml/badge.svg)](https://github.com/cahya-wirawan/rwkv-tokenizer/actions/)
-[![Pypi.org Version](https://img.shields.io/pypi/v/pyrwkv-tokenizer.svg)](https://pypi.org/project/pyrwkv-tokenizer/)
-[![Pypi.org Downloads](https://img.shields.io/pypi/dd/pyrwkv-tokenizer)](https://pypi.org/project/pyrwkv-tokenizer/)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](https://github.com/cahya-wirawan/rwkv-tokenizer/blob/main/LICENSE.txt)
+`pyrwkv-tokenizer-rwkv7` is the deployable Python wheel for the
+[`shiroko98/rwkv-tokenizer`](https://github.com/shiroko98/rwkv-tokenizer)
+fork. It keeps the Python import name stable:
 
+```python
+from pyrwkv_tokenizer import WorldTokenizer
+```
 
-A fast RWKV Tokenizer written in Rust that supports the World Tokenizer used by the 
-[RWKV](https://github.com/BlinkDL/RWKV-LM) v5 and v6 models.
+The distribution name intentionally differs from the upstream
+`pyrwkv-tokenizer` package, so an ordinary `pip install -U` cannot replace
+this fork with the older upstream wheel.
+
+## Fork features
+
+In addition to the upstream Rust tokenizer, this package provides:
+
+- `WorldTokenizer.from_buffer(vocab_bytes)` in the Python binding;
+- explicit and sparse RWKV token-ID handling, including token ID `0`;
+- parsing of Python bytes-literal vocabulary tokens such as `b'\\x00'`;
+- the `encode`, `encode_batch`, `decode`, `vocab_size`, and `get_vocab` APIs.
 
 ## Installation
-Install the rwkv-tokenizer python module:
+
+Install the wheel that matches the server's CPython ABI and CPU architecture:
+
+```bash
+python -m pip install pyrwkv-tokenizer-rwkv7==0.9.2
 ```
-$ pip install pyrwkv-tokenizer
-```
+
+The runtime import remains `pyrwkv_tokenizer`; do **not** import the
+PyPI distribution name.
+
 ## Usage
-```
->>> import pyrwkv_tokenizer
->>> tokenizer = pyrwkv_tokenizer.RWKVTokenizer()
->>> tokenizer.encode("Today is a beautiful day. 今天是美好的一天。")
-[33520, 4600, 332, 59219, 21509, 47, 33, 10381, 11639, 13091, 15597, 11685, 14734, 10250, 11639, 10080]
->>> tokenizer.decode([33520, 4600, 332, 59219, 21509, 47, 33, 10381, 11639, 13091, 15597, 11685, 14734, 10250, 11639, 10080])
-'Today is a beautiful day. 今天是美好的一天。'
 
-```
+```python
+from pathlib import Path
+from pyrwkv_tokenizer import WorldTokenizer
 
-## Performance and Validity Test
+# Load a vocabulary file.
+tokenizer = WorldTokenizer("/path/to/rwkv_vocab_v20260603.txt")
+ids = tokenizer.encode("Hello, RWKV!")
+assert tokenizer.decode(ids) == "Hello, RWKV!"
 
-We compared the encoding results of the Rust RWKV Tokenizer and the original tokenizer using
-the English Wikipedia and Chinese poetries datasets. Both results are identical. The Rust RWKV Tokenizer also 
-passes [the original tokenizer's unit test](https://github.com/BlinkDL/ChatRWKV/blob/main/tokenizer/rwkv_tokenizer.py). 
-The following steps describe how to do the unit test:
-```
-$ pip install pytest pyrwkv-tokenizer
-$ git clone https://github.com/cahya-wirawan/rwkv-tokenizer.git
-$ cd rwkv-tokenizer
-$ pytest
+# Load an augmented or generated vocabulary without writing a temporary file.
+vocab_bytes = Path("/path/to/rwkv_vocab_v20260603.txt").read_bytes()
+tokenizer = WorldTokenizer.from_buffer(vocab_bytes)
 ```
 
-We did a performance comparison on [the simple English Wikipedia dataset 20220301.en](https://huggingface.co/datasets/legacy-datasets/wikipedia) among following tokenizer:
-- The original RWKV tokenizer (BlinkDL)
-- Huggingface implementaion of RWKV tokenizer
-- Huggingface LLama tokenizer
-- Huggingface Mistral tokenizer
-- Bert tokenizer
-- OpenAI Tiktoken
-- The Rust RWKV tokenizer
+## Supported release artifacts
 
-The comparison is done using this [jupyter notebook](https://github.com/cahya-wirawan/rwkv-tokenizer/blob/main/tools/rwkv_tokenizers.ipynb) in a M2 Mac mini. The Rust RWKV 
-tokenizer is around 17x faster than the original tokenizer and 9.6x faster than OpenAI Tiktoken.
+Release CI produces source distributions and Linux wheels for:
 
-![performance-comparison](https://media.githubusercontent.com/media/cahya-wirawan/rwkv-tokenizer/main/data/performance-comparison.png)
+- CPython 3.10, 3.11, and 3.12;
+- `x86_64` (`manylinux_2_17`);
+- `aarch64` (`manylinux_2_17`).
 
-## Changelog
-- Version 0.9.1
-  - Added utf8 error handling to decoder
-- Version 0.9.0
-  - Added multithreading for the function encode_batch()
-  - Added batch/multithreading comparison
-- Version 0.3.0
-  - Fixed the issue where some characters were not encoded correctly
+Use a release wheel for deployment. Installing directly from the source tree
+requires a Rust toolchain and is intended only for development.
 
-*This tokenizer is my very first Rust program, so it might still have many bugs and silly codes :-)*
+## Development checks
 
+```bash
+cargo test --release --manifest-path rwkv-tokenizer/Cargo.toml
+pytest -q bindings/python/tests/test_package_smoke.py
+```

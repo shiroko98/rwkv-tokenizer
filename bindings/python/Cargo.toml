@@ -1,11 +1,11 @@
 [package]
 name = "pyrwkv_tokenizer"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 authors = ["Cahya Wirawan <cahya.wirawan@gmail.com>"]
 description = "A fast RWKV Tokenizer"
 license = "Apache-2.0"
-documentation = "https://github.com/cahya-wirawan/rwkv-tokenizer"
+documentation = "https://github.com/shiroko98/rwkv-tokenizer"
 exclude = [
     "data/performance-comparison.png",
     "rwkv_tokenizer/",
