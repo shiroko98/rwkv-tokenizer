@@ -52,7 +52,7 @@ jobs:
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
-          name: wheel-linux-${{ matrix.target }}-cp${{ replace(matrix.python, '.', '') }}
+          name: wheel-linux-${{ matrix.target }}-py${{ matrix.python }}
           path: bindings/python/dist/*.whl
           if-no-files-found: error
 
