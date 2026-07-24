@@ -23,13 +23,18 @@ jobs:
 
   linux-wheels:
     name: Linux ${{ matrix.target }} wheels
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      # maturin-action's manylinux Docker runners are validated against
+      # Ubuntu 22.04. Keep this pinned instead of the moving ubuntu-latest.
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
       - name: Build manylinux wheels for every supported CPython
         uses: PyO3/maturin-action@v1
         with:
