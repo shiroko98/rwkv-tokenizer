@@ -49,7 +49,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip pytest
           python -m pip install --force-reinstall --no-deps dist/*-cp311-cp311-*.whl
-          python -m pytest -q tests/test_package_smoke.py
+
+          # Do not run from bindings/python: its source package shadows the
+          # installed wheel and would make this a source-tree test instead.
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "${smoke_dir}"' EXIT
+          cp tests/test_package_smoke.py "${smoke_dir}/"
+          cd "${smoke_dir}"
+          python - <<'PY'
+          from pathlib import Path
+          import pyrwkv_tokenizer
+
+          module_path = Path(pyrwkv_tokenizer.__file__).resolve()
+          assert "site-packages" in module_path.parts, module_path
+          print(f"Testing installed wheel from: {module_path}")
+          PY
+          python -m pytest -q test_package_smoke.py
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -85,7 +100,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip pytest
           python -m pip install --force-reinstall --no-deps dist/*-cp311-cp311-*.whl
-          python -m pytest -q tests/test_package_smoke.py
+
+          # Do not run from bindings/python: its source package shadows the
+          # installed wheel and would make this a source-tree test instead.
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "${smoke_dir}"' EXIT
+          cp tests/test_package_smoke.py "${smoke_dir}/"
+          cd "${smoke_dir}"
+          python - <<'PY'
+          from pathlib import Path
+          import pyrwkv_tokenizer
+
+          module_path = Path(pyrwkv_tokenizer.__file__).resolve()
+          assert "site-packages" in module_path.parts, module_path
+          print(f"Testing installed wheel from: {module_path}")
+          PY
+          python -m pytest -q test_package_smoke.py
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
